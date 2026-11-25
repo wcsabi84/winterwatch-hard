@@ -289,7 +289,7 @@ $('ask-tonight-ai').addEventListener('click',()=>{
 
 <section class="forecast" id="historical-join">
 <h2>Part 4 — Five winters, joined</h2>
-<p>Download real <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noopener">Open-Meteo historical weather</a> for ten provisional route locations and combine it with the lecturer's <a href="https://bdaib-hub.pages.dev/data/winter/ops.csv" target="_blank" rel="noopener">7,560-row operations log</a>. Each night runs from <strong>18:00 through 09:00 the following morning</strong>, local Irish time. The weather archive reports soil temperature at <strong>0–7 cm</strong>, not measured road surface temperature. <strong>ERA5-Land provides precipitation (rain plus snow), not a separate reliable rain amount.</strong></p>
+<p>Download real <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noopener">Open-Meteo historical weather</a> for ten provisional route locations and combine it with the lecturer's <a href="https://bdaib-hub.pages.dev/data/winter/ops.csv" target="_blank" rel="noopener">7,560-row operations log</a>. Each night runs from <strong>18:00 through 09:00 the following morning</strong>, local Irish time. The weather archive reports soil temperature at <strong>0–7 cm</strong>, not measured road surface temperature. <strong>The historical archive uses total precipitation (rain and snow combined); this is not the same as rain alone.</strong></p>
 <div class="controls"><button id="build-history" type="button">Build five-winter history + join</button><button id="download-joined" type="button" disabled>Download joined CSV</button><button id="ask-history-ai" type="button" disabled>Ask AI about historic ice</button></div>
 <p id="history-status" role="status" class="muted">Click Build to fetch and calculate historical weather. The first run makes up to 50 archive requests (10 routes × 5 winters) and can take a while. Finished route-winter summaries are cached in this browser.</p>
 <progress id="history-progress" max="50" value="0" style="width:100%;height:15px;display:none"></progress>
@@ -321,7 +321,7 @@ const COORDS=[
  ['R10','R162 Kingscourt Hill',53.952000,-6.892000]
 ];
 const WINTERS=[2020,2021,2022,2023,2024];
-const CACHE_PREFIX='ww-hard-hist-v3-era5land-precipitation-';
+const CACHE_PREFIX='ww-hard-hist-v4-bestmatch-precipitation-';
 const getNum=v=>v===null||v===undefined||v===''?null:Number.isFinite(Number(v))?Number(v):null;
 const previousDay=date=>{const d=new Date(date+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-1);return d.toISOString().slice(0,10);};
 function parseCSV(text){
@@ -366,11 +366,22 @@ function weatherByNight(hourly,firstNight,lastNight){
  for(const [date,r] of nights){if(r.n>=14)result.push({date,min_air_c:r.min_air_c,min_ground_c:r.min_ground_c,min_dewpoint_c:r.min_dewpoint_c,precipitation_mm:+r.precipitation_mm.toFixed(3),hours_ground_at_or_below_0:r.hours_ground_at_or_below_0,observed_hours:r.n});}
  return result;
 }
+function weatherDiagnostic(hourly,first,last){
+ const fields=['temperature_2m','soil_temperature_0_to_7cm','dew_point_2m','precipitation'];
+ const times=hourly.time||[];
+ const examples=fields.map(f=>{
+   const arr=hourly[f];
+   if(!Array.isArray(arr))return f+': field absent';
+   const count=arr.reduce((n,v)=>n+(getNum(v)!==null?1:0),0);
+   return f+': '+count+'/'+arr.length+' numeric hours';
+ });
+ return 'Archive hours: '+times.length+'; '+examples.join('; ')+'. Example time: '+(times[0]||'none')+'. Check the generated API URL and model availability.';
+}
 async function archive(route,year){
  const [id,,lat,lon]=route,first=year+'-11-01',last=(year+1)+'-03-31',cacheKey=CACHE_PREFIX+id+'-'+year;
  try{const cached=localStorage.getItem(cacheKey);if(cached){const decoded=JSON.parse(cached);if(decoded.length>=150)return decoded;}}catch(_){/* browser cache unavailable */}
  const url=new URL('https://archive-api.open-meteo.com/v1/archive');
- Object.entries({latitude:lat,longitude:lon,start_date:first,end_date:(year+1)+'-04-01',hourly:'temperature_2m,soil_temperature_0_to_7cm,dew_point_2m,precipitation',timezone:'Europe/London',models:'era5_land'}).forEach(([key,value])=>url.searchParams.set(key,value));
+ Object.entries({latitude:lat,longitude:lon,start_date:first,end_date:(year+1)+'-04-01',hourly:'temperature_2m,soil_temperature_0_to_7cm,dew_point_2m,precipitation',timezone:'Europe/London'}).forEach(([key,value])=>url.searchParams.set(key,value));
  let error;
  for(let attempt=0;attempt<3;attempt++){
   try{
@@ -378,7 +389,7 @@ async function archive(route,year){
    const data=await res.json();if(data.error)throw Error(data.reason||'Archive API error');
    const records=weatherByNight(data.hourly||{},first,last);
    const expected=year===2023?152:151; // five winters: 2023/24 contains 29 February
-   if(records.length!==expected)throw Error('Expected '+expected+' complete nightly weather records but received '+records.length+' for '+id+' '+year+'; check hourly data fields for missing values (ERA5-Land uses precipitation, not rain).');
+   if(records.length!==expected)throw Error('Expected '+expected+' complete nightly weather records but received '+records.length+' for '+id+' '+year+'. '+weatherDiagnostic(data.hourly||{},first,last));
    try{localStorage.setItem(cacheKey,JSON.stringify(records));}catch(_){/* caching is optional */}
    return records;
   }catch(e){error=e;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,(attempt+1)*1600));}
@@ -429,7 +440,7 @@ async function run(){
   const frost=summary.reduce((a,r)=>a+r.frost,0);
   const checks=$('history-checks');checks.textContent='';
   const paragraph=document.createElement('p');paragraph.textContent='Operations: '+ops.length.toLocaleString()+' rows ✓ · '+runs+' gritting runs ✓ · '+fmt(salt,2)+' tonnes salt (rounds to 1,152.5) ✓ · Matched: '+joinedData.length.toLocaleString()+' ✓ · Unmatched: 0 ✓ · Route-nights with ground ≤ 0°C: '+frost.toLocaleString()+' (lecturer’s approximate benchmark: 770).';checks.append(paragraph);
-  const note=document.createElement('p');note.textContent='Weather estimate differs from the benchmark because this run uses ERA5-Land reanalysis soil temperature at 0–7 cm and total precipitation, selected approximate GPS locations and the archive’s model grid. '+(frost>=616&&frost<=924?'The frost count is within ±20% of the guide.':'The frost count is outside the guide’s ±20% range; inspect soil-depth/model choice before claiming a benchmark match.');checks.append(note);
+  const note=document.createElement('p');note.textContent='Weather estimate differs from the benchmark because this run uses Open-Meteo historical reanalysis soil temperature at 0–7 cm and total precipitation, selected approximate GPS locations and the archive’s model grid. '+(frost>=616&&frost<=924?'The frost count is within ±20% of the guide.':'The frost count is outside the guide’s ±20% range; inspect soil-depth/model choice before claiming a benchmark match.');checks.append(note);
   $('history-rows').innerHTML=summary.map(r=>'<tr>'+[r.id+' — '+r.name,r.nights,r.frost,r.runs,fmt(r.salt,2),r.iceT,r.iceU,r.runsNoFrost].map(c=>'<td>'+escapeHtml(c)+'</td>').join('')+'</tr>').join('');
   const treatedMax=describeMax(summary,'iceT'),untreatedMax=describeMax(summary,'iceU');
   const icingDetails=(winning,flag)=>winning.winner.map(r=>{
@@ -438,7 +449,7 @@ async function run(){
   }).join('\n');
   $('history-ice').textContent='Most ice incidents on treated nights:\n'+icingDetails(treatedMax,true)+'\n\nMost ice incidents on untreated nights:\n'+icingDetails(untreatedMax,false);
   const lines=summary.map(r=>r.id+' '+r.name+': '+r.nights+' nights; '+r.frost+' frost nights; '+r.runs+' gritting runs; '+fmt(r.salt,2)+'t salt; '+r.iceT+' ice incidents treated; '+r.iceU+' untreated; '+r.runsNoFrost+' runs on no-frost nights.');
-  window.winterHistoryContext='Five winters 2020/21–2024/25, ops joined to ERA5-Land hourly soil temperature at 0–7 cm, 18:00–09:00 night, point locations provisional. Checks: '+ops.length+' ops, '+runs+' runs, '+fmt(salt,2)+'t salt, 0 unmatched, '+frost+' frosty route-nights.\nTEN ROUTE LINES:\n'+lines.join('\n')+'\nIncident-night weather (only incidents, not entire raw log):\n'+icingDetails(treatedMax,true)+'\n'+icingDetails(untreatedMax,false)+'\nDo not invent additional counts or weather. A person makes final decisions.';
+  window.winterHistoryContext='Five winters 2020/21–2024/25, ops joined to Open-Meteo historical archive hourly soil temperature at 0–7 cm, 18:00–09:00 night, point locations provisional. Checks: '+ops.length+' ops, '+runs+' runs, '+fmt(salt,2)+'t salt, 0 unmatched, '+frost+' frosty route-nights.\nTEN ROUTE LINES:\n'+lines.join('\n')+'\nIncident-night weather (only incidents, not entire raw log):\n'+icingDetails(treatedMax,true)+'\n'+icingDetails(untreatedMax,false)+'\nDo not invent additional counts or weather. A person makes final decisions.';
   $('history-output').hidden=false;$('download-joined').disabled=false;$('ask-history-ai').disabled=false;
   status.textContent='SUCCESS — Joined all 7,560 operations records to weather; 0 unmatched. Route summary and downloadable joined CSV are ready.';
  }catch(e){status.className='error';status.textContent='Part 4 could not finish: '+e.message;console.error('Historical join error:',e);}finally{btn.disabled=false;}
