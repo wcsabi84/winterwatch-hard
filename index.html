@@ -289,7 +289,7 @@ $('ask-tonight-ai').addEventListener('click',()=>{
 
 <section class="forecast" id="historical-join">
 <h2>Part 4 — Five winters, joined</h2>
-<p>Download real <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noopener">Open-Meteo historical weather</a> for ten provisional route locations and combine it with the lecturer's <a href="https://bdaib-hub.pages.dev/data/winter/ops.csv" target="_blank" rel="noopener">7,560-row operations log</a>. Each night runs from <strong>18:00 through 09:00 the following morning</strong>, local Irish time. The weather archive reports soil temperature at <strong>0–7 cm</strong>, not measured road surface temperature.</p>
+<p>Download real <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noopener">Open-Meteo historical weather</a> for ten provisional route locations and combine it with the lecturer's <a href="https://bdaib-hub.pages.dev/data/winter/ops.csv" target="_blank" rel="noopener">7,560-row operations log</a>. Each night runs from <strong>18:00 through 09:00 the following morning</strong>, local Irish time. The weather archive reports soil temperature at <strong>0–7 cm</strong>, not measured road surface temperature. <strong>ERA5-Land provides precipitation (rain plus snow), not a separate reliable rain amount.</strong></p>
 <div class="controls"><button id="build-history" type="button">Build five-winter history + join</button><button id="download-joined" type="button" disabled>Download joined CSV</button><button id="ask-history-ai" type="button" disabled>Ask AI about historic ice</button></div>
 <p id="history-status" role="status" class="muted">Click Build to fetch and calculate historical weather. The first run makes up to 50 archive requests (10 routes × 5 winters) and can take a while. Finished route-winter summaries are cached in this browser.</p>
 <progress id="history-progress" max="50" value="0" style="width:100%;height:15px;display:none"></progress>
@@ -299,7 +299,7 @@ $('ask-tonight-ai').addEventListener('click',()=>{
   <h3>Route-by-route five-winter summary</h3>
   <div class="weather-scroll"><table class="weather-table"><thead><tr><th>Route</th><th>Nights</th><th>Frost nights</th><th>Gritting runs</th><th>Salt (t)</th><th>Ice treated</th><th>Ice untreated</th><th>Runs with no frost</th></tr></thead><tbody id="history-rows"></tbody></table></div>
   <h3>Ice incident investigation</h3><div id="history-ice" class="facts"></div>
-  <p class="muted">Method: dates in <code>ops.csv</code> refer to the evening the night starts. Each hourly weather observation is assigned to that date when its local hour is 18–23, or to the previous date for 00–09. We calculate minimum air and 0–7 cm soil temperatures, minimum dew point, summed reported hourly rain and number of hourly soil readings ≤ 0°C. The output is joined by <code>(route_id, date)</code>. The script fails rather than silently inventing weather for unmatched nights.</p>
+  <p class="muted">Method: dates in <code>ops.csv</code> refer to the evening the night starts. Each hourly weather observation is assigned to that date when its local hour is 18–23, or to the previous date for 00–09. We calculate minimum air and 0–7 cm soil temperatures, minimum dew point, summed hourly precipitation (rain and snow) and number of hourly soil readings ≤ 0°C. The output is joined by <code>(route_id, date)</code>. The script fails rather than silently inventing weather for unmatched nights.</p>
   <p class="muted">Sources: <a href="https://open-meteo.com/en/docs/historical-weather-api" target="_blank" rel="noopener">Open-Meteo Historical Weather API</a> (modelled/reanalysis, site licence and data attribution terms apply), <a href="https://bdaib-hub.pages.dev/data/winter/ops.csv" target="_blank" rel="noopener">fictional operations CSV</a> and <a href="https://bdaib-hub.pages.dev/data/winter/routes-named.csv" target="_blank" rel="noopener">route descriptions</a>. Calculated weather depends on the model, archive version, soil depth and approximate GPS points, so frost counts may differ from the lecturer's ~770 reference.</p>
 </div>
 </section>
@@ -321,7 +321,7 @@ const COORDS=[
  ['R10','R162 Kingscourt Hill',53.952000,-6.892000]
 ];
 const WINTERS=[2020,2021,2022,2023,2024];
-const CACHE_PREFIX='ww-hard-hist-v2-era5land-';
+const CACHE_PREFIX='ww-hard-hist-v3-era5land-precipitation-';
 const getNum=v=>v===null||v===undefined||v===''?null:Number.isFinite(Number(v))?Number(v):null;
 const previousDay=date=>{const d=new Date(date+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-1);return d.toISOString().slice(0,10);};
 function parseCSV(text){
@@ -345,32 +345,32 @@ async function fetchOps(){
 }
 function weatherByNight(hourly,firstNight,lastNight){
  const nights=new Map();
- const {time,temperature_2m,soil_temperature_0_to_7cm,dew_point_2m,rain}=hourly;
- if(!Array.isArray(time)||!Array.isArray(soil_temperature_0_to_7cm)||!Array.isArray(temperature_2m)||!Array.isArray(dew_point_2m)||!Array.isArray(rain))throw Error('Archive response lacks an hourly weather field');
+ const {time,temperature_2m,soil_temperature_0_to_7cm,dew_point_2m,precipitation}=hourly;
+ if(!Array.isArray(time)||!Array.isArray(soil_temperature_0_to_7cm)||!Array.isArray(temperature_2m)||!Array.isArray(dew_point_2m)||!Array.isArray(precipitation))throw Error('Archive response lacks an hourly weather field');
  for(let i=0;i<time.length;i++){
   const stamp=time[i],date=stamp.slice(0,10),hour=Number(stamp.slice(11,13));
   if(!(hour>=18||hour<=9))continue;
   const night=hour>=18?date:previousDay(date);
   if(night<firstNight||night>lastNight)continue;
-  if(!nights.has(night))nights.set(night,{n:0,min_air_c:null,min_ground_c:null,min_dewpoint_c:null,rain_mm:0,hours_ground_at_or_below_0:0,rain_hours:0});
-  const r=nights.get(night),air=getNum(temperature_2m[i]),ground=getNum(soil_temperature_0_to_7cm[i]),dew=getNum(dew_point_2m[i]),precip=getNum(rain[i]);
+  if(!nights.has(night))nights.set(night,{n:0,min_air_c:null,min_ground_c:null,min_dewpoint_c:null,precipitation_mm:0,hours_ground_at_or_below_0:0,precipitation_hours:0});
+  const r=nights.get(night),air=getNum(temperature_2m[i]),ground=getNum(soil_temperature_0_to_7cm[i]),dew=getNum(dew_point_2m[i]),precip=getNum(precipitation[i]);
   if([air,ground,dew,precip].some(v=>v===null))continue;
   r.n++;
   r.min_air_c=r.min_air_c===null?air:Math.min(r.min_air_c,air);
   r.min_ground_c=r.min_ground_c===null?ground:Math.min(r.min_ground_c,ground);
   r.min_dewpoint_c=r.min_dewpoint_c===null?dew:Math.min(r.min_dewpoint_c,dew);
-  r.rain_mm+=precip;r.rain_hours+=precip>0?1:0;
+  r.precipitation_mm+=precip;r.precipitation_hours+=precip>0?1:0;
   if(ground<=0)r.hours_ground_at_or_below_0++;
  }
  const result=[];
- for(const [date,r] of nights){if(r.n>=14)result.push({date,min_air_c:r.min_air_c,min_ground_c:r.min_ground_c,min_dewpoint_c:r.min_dewpoint_c,rain_mm:+r.rain_mm.toFixed(3),hours_ground_at_or_below_0:r.hours_ground_at_or_below_0,observed_hours:r.n});}
+ for(const [date,r] of nights){if(r.n>=14)result.push({date,min_air_c:r.min_air_c,min_ground_c:r.min_ground_c,min_dewpoint_c:r.min_dewpoint_c,precipitation_mm:+r.precipitation_mm.toFixed(3),hours_ground_at_or_below_0:r.hours_ground_at_or_below_0,observed_hours:r.n});}
  return result;
 }
 async function archive(route,year){
  const [id,,lat,lon]=route,first=year+'-11-01',last=(year+1)+'-03-31',cacheKey=CACHE_PREFIX+id+'-'+year;
  try{const cached=localStorage.getItem(cacheKey);if(cached){const decoded=JSON.parse(cached);if(decoded.length>=150)return decoded;}}catch(_){/* browser cache unavailable */}
  const url=new URL('https://archive-api.open-meteo.com/v1/archive');
- Object.entries({latitude:lat,longitude:lon,start_date:first,end_date:(year+1)+'-04-01',hourly:'temperature_2m,soil_temperature_0_to_7cm,dew_point_2m,rain',timezone:'Europe/London',models:'era5_land'}).forEach(([key,value])=>url.searchParams.set(key,value));
+ Object.entries({latitude:lat,longitude:lon,start_date:first,end_date:(year+1)+'-04-01',hourly:'temperature_2m,soil_temperature_0_to_7cm,dew_point_2m,precipitation',timezone:'Europe/London',models:'era5_land'}).forEach(([key,value])=>url.searchParams.set(key,value));
  let error;
  for(let attempt=0;attempt<3;attempt++){
   try{
@@ -378,7 +378,7 @@ async function archive(route,year){
    const data=await res.json();if(data.error)throw Error(data.reason||'Archive API error');
    const records=weatherByNight(data.hourly||{},first,last);
    const expected=year===2023?152:151; // five winters: 2023/24 contains 29 February
-   if(records.length!==expected)throw Error('Expected '+expected+' complete nightly weather records but received '+records.length+' (example '+id+', '+year+')');
+   if(records.length!==expected)throw Error('Expected '+expected+' complete nightly weather records but received '+records.length+' for '+id+' '+year+'; check hourly data fields for missing values (ERA5-Land uses precipitation, not rain).');
    try{localStorage.setItem(cacheKey,JSON.stringify(records));}catch(_){/* caching is optional */}
    return records;
   }catch(e){error=e;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,(attempt+1)*1600));}
@@ -388,7 +388,7 @@ async function archive(route,year){
 const escapeHtml=s=>String(s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const fmt=(n,places=1)=>Number(n).toFixed(places);
 let joinedData=[];
-const cols=['date','route_id','route','priority','depot','gritted','decision','salt_t','depot_stock_after_t','ice_incidents','notes','min_air_c','min_ground_c','min_dewpoint_c','rain_mm','hours_ground_at_or_below_0','observed_hours'];
+const cols=['date','route_id','route','priority','depot','gritted','decision','salt_t','depot_stock_after_t','ice_incidents','notes','min_air_c','min_ground_c','min_dewpoint_c','precipitation_mm','hours_ground_at_or_below_0','observed_hours'];
 function downloadCSV(rows){
  const quote=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
  const csv=[cols.map(quote).join(','),...rows.map(r=>cols.map(k=>quote(r[k])).join(','))].join('\r\n');
@@ -429,12 +429,12 @@ async function run(){
   const frost=summary.reduce((a,r)=>a+r.frost,0);
   const checks=$('history-checks');checks.textContent='';
   const paragraph=document.createElement('p');paragraph.textContent='Operations: '+ops.length.toLocaleString()+' rows ✓ · '+runs+' gritting runs ✓ · '+fmt(salt,2)+' tonnes salt (rounds to 1,152.5) ✓ · Matched: '+joinedData.length.toLocaleString()+' ✓ · Unmatched: 0 ✓ · Route-nights with ground ≤ 0°C: '+frost.toLocaleString()+' (lecturer’s approximate benchmark: 770).';checks.append(paragraph);
-  const note=document.createElement('p');note.textContent='Weather estimate differs from the benchmark because this run uses ERA5-Land reanalysis soil temperature at 0–7 cm, selected approximate GPS locations and the archive’s model grid. '+(frost>=616&&frost<=924?'The frost count is within ±20% of the guide.':'The frost count is outside the guide’s ±20% range; inspect soil-depth/model choice before claiming a benchmark match.');checks.append(note);
+  const note=document.createElement('p');note.textContent='Weather estimate differs from the benchmark because this run uses ERA5-Land reanalysis soil temperature at 0–7 cm and total precipitation, selected approximate GPS locations and the archive’s model grid. '+(frost>=616&&frost<=924?'The frost count is within ±20% of the guide.':'The frost count is outside the guide’s ±20% range; inspect soil-depth/model choice before claiming a benchmark match.');checks.append(note);
   $('history-rows').innerHTML=summary.map(r=>'<tr>'+[r.id+' — '+r.name,r.nights,r.frost,r.runs,fmt(r.salt,2),r.iceT,r.iceU,r.runsNoFrost].map(c=>'<td>'+escapeHtml(c)+'</td>').join('')+'</tr>').join('');
   const treatedMax=describeMax(summary,'iceT'),untreatedMax=describeMax(summary,'iceU');
   const icingDetails=(winning,flag)=>winning.winner.map(r=>{
     const incidents=joinedData.filter(o=>o.route_id===r.id&&(o.gritted.trim().toLowerCase()==='yes')===flag&&(getNum(o.ice_incidents)||0)>0);
-    return r.id+' '+r.name+': '+winning.maximum+' incidents. Incident nights: '+incidents.map(o=>o.date+' (ground '+fmt(o.min_ground_c)+'°C, rain '+fmt(o.rain_mm,2)+' mm, dew point '+fmt(o.min_dewpoint_c)+'°C)').join('; ');
+    return r.id+' '+r.name+': '+winning.maximum+' incidents. Incident nights: '+incidents.map(o=>o.date+' (ground '+fmt(o.min_ground_c)+'°C, precipitation '+fmt(o.precipitation_mm,2)+' mm, dew point '+fmt(o.min_dewpoint_c)+'°C)').join('; ');
   }).join('\n');
   $('history-ice').textContent='Most ice incidents on treated nights:\n'+icingDetails(treatedMax,true)+'\n\nMost ice incidents on untreated nights:\n'+icingDetails(untreatedMax,false);
   const lines=summary.map(r=>r.id+' '+r.name+': '+r.nights+' nights; '+r.frost+' frost nights; '+r.runs+' gritting runs; '+fmt(r.salt,2)+'t salt; '+r.iceT+' ice incidents treated; '+r.iceU+' untreated; '+r.runsNoFrost+' runs on no-frost nights.');
@@ -448,7 +448,7 @@ $('download-joined').addEventListener('click',()=>{if(joinedData.length)download
 $('ask-history-ai').addEventListener('click',()=>{
  if(!window.winterHistoryContext)return;
  window.winterHistoryAskMode=true;
- $('ai-question').value='Historically, which route had the most recorded ice incidents on treated nights, and which had the most on untreated nights? Describe the ground temperature, rain and dew point on those incident nights using ONLY the computed history summary. Mention limitations.';
+ $('ai-question').value='Historically, which route had the most recorded ice incidents on treated nights, and which had the most on untreated nights? Describe the ground temperature, precipitation and dew point on those incident nights using ONLY the computed history summary. Mention limitations.';
  $('ai-ask').click();window.winterHistoryAskMode=false;$('part1').scrollIntoView({behavior:'smooth',block:'start'});
 });
 })();
